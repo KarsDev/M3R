@@ -490,17 +490,25 @@ static int PlayGame() {
 
             std::cout << "You played " << MoveToUci(move) << ".\n";
         } else {
-            std::cout << "Engine thinking (depth " << ENGINE_DEPTH << ")...\n";
+            std::cout << "Engine thinking (" << TIME_LIMIT / 1000 << " s)...\n";
+
+            // Let the search see the positions already played, so it recognises repetitions
+            limits.gameHistory = BuildGameHistory(board, history);
+
             const SearchResult result = FindBestMove(board, limits);
             if (!result.hasMove) {
                 std::cout << "The engine has no legal move.\n";
                 break;
             }
 
-            if (UndoState undo{}; !MakeMove(board, result.bestMove, undo)) {
+            UndoState undo{};
+            if (!MakeMove(board, result.bestMove, undo)) {
                 std::cerr << "Internal error: engine returned an illegal move.\n";
                 return 1;
             }
+
+            // Record the engine's move too: the history (and the 'undo' command) need every move played
+            history.push_back({.move = result.bestMove, .undo = undo, .humanMove = false});
 
             std::cout << "Engine plays " << MoveToUci(result.bestMove)
                     << " (searched depth " << result.depth

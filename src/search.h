@@ -40,8 +40,8 @@ struct SearchLimits {
     const std::atomic<bool> *stop = nullptr; // optional external stop
 
     /*
-     * Zobrist keys of the position played before the rood (oldest first), so repetition of
-     *  earlier game positions are detected.
+     * Zobrist keys of the position played before the root from the oldest, so repetitions of
+     *  earlier game positions are detected. See BuildGameHistory().
      */
     std::vector<std::uint64_t> gameHistory;
 
@@ -51,6 +51,29 @@ struct SearchLimits {
 };
 
 constexpr int MAX_THREADS = 256;
+
+/*
+ * Zobrist keys of every position that came before 'board' in the game, from the oldest to the newest.
+ *
+ * The current position is not included since the search adds itself. Pass the result as SearchLimits::gameHistory so
+ * the search can see repetitions against positions that were actually played.
+ *
+ * The 'entries' are all the move played from the game's start position, from the oldest. Each element needs a '.move'
+ * and a '.undo. that MakeMove() filled in. The keys are rebuilt by unmaking the moves on a copy of the board,
+ * so 'board' itself is never touched.
+ */
+template<typename Entries> std::vector<std::uint64_t> BuildGameHistory(Board board, const Entries &entries) {
+    std::vector<std::uint64_t> keys;
+    keys.reserve(entries.size());
+
+    for (auto it = entries.rbegin(); it != entries.rend(); ++it) {
+        UnmakeMove(board, it->move, it->undo);
+        keys.push_back(PositionKey(board));
+    }
+
+    std::ranges::reverse(keys);
+    return keys;
+}
 
 // State shared by every search thread of one FindBestMove() call
 struct SharedSearchState {
@@ -331,13 +354,25 @@ inline void RecordQuietCutoff(
 
 /*
  * Repetition: has this exact position occurred earlier in the current line since the last irreversible move?
- * Twofold inside the search tree is treated as a draw: standard engine convention.
+ *
+ *  - A repeat inside the search tree (index >= rootIndex) is scored as a draw.
+ *    If one side can repeat once it can repeat again, so treating it as a draw is the standard and safe convention.
+ *
+ *  - A repeat of a position from the game before the root only counts once that position has already occurred twice
+ *   there, otherwise the engine would think a position that has happened only once in the real game is already a draw.
  */
 inline bool IsRepetition(const SearchContext &ctx, const int index, const int halfmoveClock) {
     const int limit = std::max(0, index - halfmoveClock);
+    int earlierInGame = 0;
 
     for (int i = index - 2; i >= limit; i -= 2) {
-        if (ctx.keys[i] == ctx.keys[index])
+        if (ctx.keys[i] != ctx.keys[index])
+            continue;
+
+        if (i >= ctx.rootIndex)
+            return true;
+
+        if (++earlierInGame >= 2)
             return true;
     }
 

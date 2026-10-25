@@ -253,6 +253,9 @@ static void StartEngine(Game &g) {
     limits.printInfo = false;
     limits.threads = static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
 
+    // Let the search see the positions already played, so it recognises repetitions
+    limits.gameHistory = BuildGameHistory(g.board, g.history);
+
     g.search = std::async(std::launch::async, [b = g.board, limits]() mutable {
         return FindBestMove(b, limits);
     });
@@ -379,7 +382,8 @@ static void DrawPiece(const char piece, const Vector2 center, const float alpha 
         }
 
         int len = 0;
-        const std::string glyph(CodepointToUTF8(cp, &len), static_cast<size_t>(len));
+        const char *utf8 = CodepointToUTF8(cp, &len);
+        const std::string glyph(utf8, static_cast<size_t>(len));
         constexpr float size = SQ * 0.82f;
         const auto [x, y] = MeasureTextEx(g_pieceFont, glyph.c_str(), size, 0.0f);
         const Vector2 pos{.x = center.x - x / 2.0f, .y = center.y - y / 2.0f};
