@@ -8,6 +8,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <atomic>
+#include <cmath>
 
 #define Color EngineColor
 #include "board.h"
@@ -24,7 +26,7 @@ static constexpr int SIDE_WHITE = WHITE;
 
 namespace {
     constexpr int SQ = 80;
-    constexpr int BOARD_X = 40;
+    constexpr int BOARD_X = 76;
     constexpr int BOARD_Y = 40;
     constexpr int BOARD_PX = SQ * 8;
     constexpr int PANEL_X = BOARD_X + BOARD_PX + 40;
@@ -32,10 +34,22 @@ namespace {
     constexpr int WIN_W = PANEL_X + PANEL_W + 20;
     constexpr int WIN_H = BOARD_Y + BOARD_PX + 40;
 
+    // Bar constants
+    constexpr int EVAL_X = 14;
+    constexpr int EVAL_W = 24;
+
+    // Must match the mate constant used in your search
+    constexpr int MATE_SCORE = 30000;
+    constexpr int MATE_BOUND = MATE_SCORE - 256;
+
+    constexpr Color C_EVAL_WHITE{.r = 240, .g = 240, .b = 240, .a = 255};
+    constexpr Color C_EVAL_BLACK{.r = 64,  .g = 62,  .b = 60,  .a = 255};
+    constexpr Color C_EVAL_MID{.r = 128, .g = 128, .b = 128, .a = 200};
+
     constexpr auto START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
     constexpr int ENGINE_DEPTH = 30;
-    constexpr int TIME_PRESETS_MS[] = {500, 1000, 2000, 5000, 10000, 20000};
-    constexpr int DEFAULT_TIME_INDEX = 3;
+    constexpr int TIME_PRESETS_MS[] = {100, 500, 1000, 2000, 5000, 10000, 20000};
+    constexpr int DEFAULT_TIME_INDEX = 4;
 
     constexpr Color C_BG{.r = 38, .g = 36, .b = 33, .a = 255};
     constexpr Color C_PANEL{.r = 49, .g = 46, .b = 43, .a = 255};
@@ -99,6 +113,11 @@ namespace {
         bool thinking = false;
         int timeIndex = DEFAULT_TIME_INDEX;
         std::string engineInfo;
+
+        // Eval bar
+        std::atomic<int> evalCp{0};     // White's perspective in centipawns
+        std::atomic<int> evalMate{0};   // 0 = none, +n = White mates in n, -n = Black mates in n
+        float shownWhite = 0.5f;          // animated bar fill (white's share)
     };
 }
 
@@ -167,6 +186,11 @@ static void RefreshPosition(Game &g) {
     }
 }
 
+static void ResetEval(Game &g) {
+    g.evalCp = 0;
+    g.evalMate = 0;
+}
+
 static void NewGame(Game &g, const bool humanWhite) {
     ParseFEN(g.board, START_FEN);
     g_transpositionTable.Clear();
@@ -178,6 +202,7 @@ static void NewGame(Game &g, const bool humanWhite) {
     g.engineInfo.clear();
     ClearSelection(g);
     RefreshPosition(g);
+    ResetEval(g);
 }
 
 static void RecordLastMove(Game &g) {
@@ -246,6 +271,18 @@ static void UndoMove(Game &g) {
     RefreshPosition(g);
 }
 
+static void StoreEval(Game &g, const int score, const bool whiteToMove) {
+    if (const int w = whiteToMove ? score : -score; std::abs(w) >= MATE_BOUND) {
+        const int plies = MATE_SCORE - std::abs(w);
+        const int moves = std::max(1, (plies + 1) / 2);
+        g.evalMate = w > 0 ? moves : -moves;
+        g.evalCp = w > 0 ? 10000 : -10000;
+    } else {
+        g.evalMate = 0;
+        g.evalCp = w;
+    }
+}
+
 static void StartEngine(Game &g) {
     SearchLimits limits;
     limits.timeMs = TIME_PRESETS_MS[g.timeIndex];
@@ -260,21 +297,26 @@ static void StartEngine(Game &g) {
         return FindBestMove(b, limits);
     });
     g.thinking = true;
+
+    const bool whiteToMove = g.board.side == SIDE_WHITE;
+    limits.onDepth = [&g, whiteToMove](int, const int score) {
+        StoreEval(g, score, whiteToMove);
+    };
 }
 
 static void PollEngine(Game &g) {
     if (!g.thinking) return;
     if (g.search.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
 
-    const SearchResult result = g.search.get();
+    const auto [bestMove, score, nodes, depth, hasMove] = g.search.get();
     g.thinking = false;
 
-    if (!result.hasMove) {
+    if (!hasMove) {
         g.engineInfo = "Engine has no legal move.";
         return;
     }
 
-    const std::string uci = MoveToUci(result.bestMove);
+    const std::string uci = MoveToUci(bestMove);
     const auto it = std::ranges::find_if(g.legal,
                                          [&](const LegalMove &lm) { return lm.uci == uci; });
     if (it == g.legal.end()) {
@@ -283,11 +325,15 @@ static void PollEngine(Game &g) {
     }
 
     const LegalMove& chosen = *it;
+
+    StoreEval(g, score, g.board.side == SIDE_WHITE);
+    PlayMove(g, chosen, false);
+
     PlayMove(g, chosen, false);
 
     char buf[96];
     std::snprintf(buf, sizeof buf, "Engine: %s (depth %d, %llu nodes)", uci.c_str(),
-                  static_cast<int>(result.depth), static_cast<unsigned long long>(result.nodes));
+                  static_cast<int>(depth), static_cast<unsigned long long>(nodes));
     g.engineInfo = buf;
 }
 
@@ -336,6 +382,48 @@ static void DrawLabel(const std::string &s, const float x, const float y, const 
 
 static float LabelWidth(const std::string &s, const float size) {
     return MeasureTextEx(g_uiFont, s.c_str(), size, 1.0f).x;
+}
+
+// Lichess-Style cp -> win-chance curve, as White's share of the bar.
+static float WhiteFraction(const Game &g) {
+    if (g.gameOver) {
+        if (!g.inCheck) return 0.5f;
+        return g.board.side == SIDE_WHITE ? 0.0f : 1.0f;   // side to move is mated
+    }
+    if (const int m = g.evalMate; m != 0) return m > 0 ? 1.0f : 0.0f;
+    return 1.0f / (1.0f + std::exp(-0.00368208f * static_cast<float>(g.evalCp.load())));
+}
+
+static void UpdateEvalBar(Game &g) {
+    const float target = WhiteFraction(g);
+    g.shownWhite += (target - g.shownWhite) * std::min(1.0f, GetFrameTime() * 8.0f);
+}
+
+static std::string EvalLabel(const Game &g) {
+    if (g.gameOver) {
+        if (!g.inCheck) return "1/2";
+        return g.board.side == SIDE_WHITE ? "0-1" : "1-0";
+    }
+    char buf[24];
+    if (const int m = g.evalMate; m != 0)
+        std::snprintf(buf, sizeof buf, "%sM%d", m < 0 ? "-" : "", std::abs(m));
+    else
+        std::snprintf(buf, sizeof buf, "%+.1f", g.evalCp / 100.0);
+    return buf;
+}
+
+static void DrawEvalBar(const Game &g) {
+    constexpr float x = EVAL_X, y = BOARD_Y, w = EVAL_W, h = BOARD_PX;
+    const float whiteH = h * g.shownWhite;
+    const float whiteY = g.flipped ? y : y + h - whiteH;   // White's end follows the board
+
+    DrawRectangleRec({.x = x, .y = y, .width = w, .height = h}, C_EVAL_BLACK);
+    DrawRectangleRec({.x = x, .y = whiteY, .width = w, .height = whiteH}, C_EVAL_WHITE);
+    DrawRectangleRec({.x = x, .y = y + h / 2.0f - 1.0f, .width = w, .height = 2.0f}, C_EVAL_MID);
+
+    const std::string label = EvalLabel(g);
+    const float lw = LabelWidth(label, 14.0f);
+    DrawLabel(label, std::max(2.0f, x + w / 2.0f - lw / 2.0f), y - 24.0f, 14.0f, C_TEXT);
 }
 
 static Vector2 SquareOrigin(const Game &g, const int sq) {
@@ -645,6 +733,7 @@ int main(const int argc, const char **argv) {
 
     while (!WindowShouldClose()) {
         PollEngine(game);
+        UpdateEvalBar(game);
 
         for (int sq = 0; sq < 64; ++sq)
             grid[static_cast<size_t>(sq)] = PieceChar(game.board, sq);
@@ -677,6 +766,7 @@ int main(const int argc, const char **argv) {
         BeginDrawing();
         ClearBackground(C_BG);
         DrawBoard(game, grid);
+        DrawEvalBar(game);
         if (game.promoFrom >= 0) DrawPromotionChooser(game);
         DrawPanel(game);
         EndDrawing();

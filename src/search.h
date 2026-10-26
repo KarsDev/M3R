@@ -12,6 +12,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <functional>
 
 #include "eval.h"
 #include "legalmoves.h"
@@ -48,6 +49,9 @@ struct SearchLimits {
     bool printInfo = false; // print a UCI-style "info" line per iteration
 
     int threads = 1; // search threads (Lazy SMP)
+
+    // For the evaluation bar
+    std::function<void(int depth, int score)> onDepth;
 };
 
 constexpr int MAX_THREADS = 256;

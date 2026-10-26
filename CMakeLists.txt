@@ -44,7 +44,8 @@ else()
 endif()
 
 # console version (play, --test, --bench)
-add_executable(M3R src/main.cpp ${ENGINE_HEADERS})
+add_executable(M3R src/main.cpp ${ENGINE_HEADERS}
+        src/ponder.h)
 target_link_libraries(M3R PRIVATE m3r_flags)
 
 # GUI version
