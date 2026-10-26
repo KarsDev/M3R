@@ -483,88 +483,43 @@ inline int EvalSlidingMobility(
 }
 
 
-// Mobility score from this side's perspective
-inline void EvalMobility(
-    const Board &board,
-    const int side,
-    int &mg,
-    int &eg
-) {
-    const int knight = side == WHITE ? N : n;
-    const int bishop = side == WHITE ? B : b;
-    const int rook = side == WHITE ? R : r;
-    const int queen = side == WHITE ? Q : q;
+/*
+ * Mobility (safe squares each minor or major piece can reach) from this side's prospective
+ * Safe means not occupied by our own pieces and not attacked by an enemy pawn
+*/
+inline void EvalMobility(const Board &board, const int side, int &mg, int &eg) {
+    // {offset, mg weight, eg weight} for N, B, R, Q
+    static constexpr int OFFSET[4] = {4, 7, 7, 14};
+    static constexpr int MG_W[4]   = {4, 3, 2, 1};
+    static constexpr int EG_W[4]   = {3, 4, 3, 2};
 
-    const u64 ownOccupancy = board.occupancies[side];
-
-    // knights
-    u64 knights = board.bitboards[knight];
-
-    while (knights) {
-        const int sq = __builtin_ctzll(knights);
-        knights &= knights - 1;
-
-        const int mobility =
-                EvalKnightMobility(sq, ownOccupancy);
-
-        mg += (mobility - 4) * 4;
-        eg += (mobility - 4) * 3;
-    }
-
-    // bishops
-    u64 bishops = board.bitboards[bishop];
-
-    while (bishops) {
-        const int sq = __builtin_ctzll(bishops);
-        bishops &= bishops - 1;
-
-        const int mobility = EvalSlidingMobility(
-            board, sq, ownOccupancy, true, false
-        );
-
-        mg += (mobility - 7) * 3;
-        eg += (mobility - 7) * 4;
-    }
-
-    // rooks
-    u64 rooks = board.bitboards[rook];
-
-    while (rooks) {
-        const int sq = __builtin_ctzll(rooks);
-        rooks &= rooks - 1;
-
-        const int mobility = EvalSlidingMobility(
-            board, sq, ownOccupancy, false, true
-        );
-
-        mg += (mobility - 7) * 2;
-        eg += (mobility - 7) * 3;
-    }
-
-    // queens
-    u64 queens = board.bitboards[queen];
-
-    while (queens) {
-        const int sq = __builtin_ctzll(queens);
-        queens &= queens - 1;
-
-        const int mobility = EvalSlidingMobility(
-            board, sq, ownOccupancy, true, true
-        );
-
-        mg += mobility - 14;
-        eg += (mobility - 14) * 2;
-    }
-
+    const int base = side == WHITE ? 0 : 6;
     const u64 occ = board.occupancies[BOTH];
-    const u64 area = ~(board.bitboards[side == WHITE ? P : p] |
-                       board.bitboards[side == WHITE ? K : k] |
-                       PawnAttacksBB(board.bitboards[side == WHITE ? p : P], side ^ 1));
 
-    for (u64 bb = board.bitboards[bishop]; bb; bb &= bb - 1) {
-        const int m = PopCount(BishopAttacks(__builtin_ctzll(bb), occ) & area);
-        mg += (m - 7) * 3;
-        eg += (m - 7) * 4;
+    const u64 enemyPawnAttacks =
+            PawnAttacksBB(board.bitboards[side == WHITE ? p : P], side ^ 1);
+    const u64 area = ~(board.occupancies[side] | enemyPawnAttacks);
+
+    for (int type = N; type <= Q; ++type) {
+        const int i = type - N; // 0..3
+        u64 pieces = board.bitboards[type + base];
+
+        while (pieces) {
+            const int sq = __builtin_ctzll(pieces);
+            pieces &= pieces - 1;
+
+            u64 attacks;
+            switch (type) {
+                case N:  attacks = knight_attacks[sq];       break;
+                case B:  attacks = BishopAttacks(sq, occ);   break;
+                case R:  attacks = RookAttacks(sq, occ);     break;
+                default: attacks = QueenAttacks(sq, occ);    break;
+            }
+
+            const int m = PopCount(attacks & area) - OFFSET[i];
+            mg += m * MG_W[i];
+            eg += m * EG_W[i];
+        }
     }
 }
 
