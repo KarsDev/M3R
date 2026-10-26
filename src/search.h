@@ -126,6 +126,15 @@ inline std::int64_t ElapsedMs(const SearchContext &ctx) {
         std::chrono::steady_clock::now() - ctx.start).count();
 }
 
+inline int SeeValue(const int piece) {
+    constexpr int values[6] = {100, 320, 330, 500, 900, 20000};
+
+    if (piece < 0 || piece >= PIECE_NB)
+        return 0;
+
+    return values[piece % 6];
+}
+
 /*
  * Polled every 2048 nodes.
  * Every thread watches the shared stop flag. Only the main thread enforces the time,
@@ -188,11 +197,11 @@ inline bool SeeGE(const Board &board, const Move move, const int threshold) {
     const int piece = GET_MOVE_PIECE(move);
     const int captured = GET_MOVE_CAPTURED(move);
 
-    int swap = PieceValue(captured) - threshold;
+    int swap = SeeValue(captured) - threshold;
     if (swap < 0)
         return false;
 
-    swap = PieceValue(piece) - swap;
+    swap = SeeValue(piece) - swap;
     if (swap <= 0)
         return true;
 
@@ -290,7 +299,7 @@ inline void ScoreMoves(
             if (promoted != 0)
                 good = promoted % 6 == Q; // underpromotions are rarely best
             else
-                good = PieceValue(captured) >= PieceValue(piece) || SeeGE(board, move, 0);
+                good = SeeValue(captured) >= SeeValue(piece) || SeeGE(board, move, 0);
 
             scores[i] = good ? ORDER_GOOD_CAPTURE + mvvLva : ORDER_BAD + mvvLva;
             continue;

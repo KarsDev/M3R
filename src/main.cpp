@@ -147,6 +147,14 @@ static void TestSee() {
         CHECK(!SeeGE(board, rxe5, 321));
     }
 
+    // King takes a defended pawn: must lose
+    ParseFEN(board, "4k3/8/4p3/3p4/2K5/8/8/8 w - - 0 1");
+    CHECK(!SeeGE(board, EncodeMove(c4, d5, K, p, 0, MOVE_CAPTURE), 0));
+
+    // King takes an undefended pawn: must win
+    ParseFEN(board, "4k3/8/8/3p4/2K5/8/8/8 w - - 0 1");
+    CHECK(SeeGE(board, EncodeMove(c4, d5, K, p, 0, MOVE_CAPTURE), 0));
+
     std::cout << "SEE tests passed.\n";
 }
 
