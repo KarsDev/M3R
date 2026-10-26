@@ -5,10 +5,10 @@
 
 #include "move.h"
 
-struct MoveList {
+struct MoveList { // NOLINT(*-pro-type-member-init)
     // Deliberately NOT zero-initialised: value-initialising 1 KB on every move-generation call was measurable.
     // Only moves[0..count) are valid
-    Move moves[256]{};
+    Move moves[256];
     int count = 0;
 
     void AddMove(const Move move) {
