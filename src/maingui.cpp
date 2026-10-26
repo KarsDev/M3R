@@ -329,8 +329,6 @@ static void PollEngine(Game &g) {
     StoreEval(g, score, g.board.side == SIDE_WHITE);
     PlayMove(g, chosen, false);
 
-    PlayMove(g, chosen, false);
-
     char buf[96];
     std::snprintf(buf, sizeof buf, "Engine: %s (depth %d, %llu nodes)", uci.c_str(),
                   static_cast<int>(depth), static_cast<unsigned long long>(nodes));
